@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+trap 'echo "Error at ${BASH_SOURCE[0]}:$LINENO"' ERR
+
+force=
+for arg in "$@"; do
+    case $arg in
+        -f|--force)
+            force=1
+            ;;
+        *)
+            id=$arg
+            ;;
+    esac
+done
+
+source "${BASH_SOURCE[0]%/*}"/get-github-repo
+echo curl -fsS "https://api.github.com/repos/$repo/pulls/$id"
+branch=$(curl -fsS "https://api.github.com/repos/$repo/pulls/$id" | jq -e -r .head.ref)
+currentBranch=$(git branch --show-current)
+
+if [[ ! $force && $branch != $currentBranch ]] && ! git diff-index --quiet HEAD; then
+    >&2 echo "Error: There are uncommitted changes. Run with -f to ignore."
+    exit 1
+fi
+
+echo "Fetching $branch ($id)"
+git fetch "$remote" pull/$id/head
+
+oldRev=$(git rev-parse "$branch" 2>/dev/null) || oldRev=
+storedOldRev=
+if [[ $oldRev && $oldRev != $(git rev-parse FETCH_HEAD) ]]; then
+    git branch -f oldpr $oldRev
+    storedOldRev=1
+fi
+
+git switch -f --force-create "$branch" FETCH_HEAD
+
+if [[ $storedOldRev ]]; then
+    echo
+    echo 'Stored previous version in branch `oldpr`'
+    echo
+    echo 'Changes since `oldpr`:'
+    { git diff --color oldpr || :; } | head -200
+fi

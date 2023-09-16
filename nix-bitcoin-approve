@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Requires the following to be in $PATH:
+# - `fetch-github-pr` (defined in this repo)
+# - `gh` (https://github.com/cli/cli)
+# - `run-tests.sh` (nix-bitcoin)
+# - `notify-send`
+
+# See the FIXME below
+
+# Usage
+#   nix-bitcoin-approve <nix-bitcoin PR number>
+
+# Summary
+# - If HEAD doesn't match the nix-bitcoin PR rev, fetch PR and exit
+# - Run tests
+# - Check that PR has not changed
+# - Approve PR on success
+
+pr=$1
+tests=${2:-all}
+
+case $tests in
+  b)
+    tests=buildable
+    ;;
+esac
+
+cd $src
+
+get_pr_rev() {
+    curl -fsS -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+         https://api.github.com/repos/fort-nix/nix-bitcoin/pulls/$pr \
+        | jq -r .head.sha
+}
+
+rev=$(get_pr_rev)
+
+if [[ $rev != $(git rev-parse HEAD) ]]; then
+    echo "Fetching PR."
+    git-pr $pr
+    exit 1
+fi
+
+if ! git diff-index --quiet HEAD; then
+    echo "Error: There are uncommitted changes."
+    exit 1
+fi
+
+if [[ $tests != none ]]; then
+  echo
+  echo "running tests $tests"
+  # run test on build server
+  # FIXME: set build server
+  run-tests.sh --copy-src --out-link-prefix ~/build/nix/nix-bitcoin-tests $tests --max-jobs 0 --builders 'ssh://<my_build_server> - - 15 - big-parallel,kvm,nixos-test'
+fi
+
+# The PR might have changed during testing
+if [[ $rev != $(get_pr_rev) ]]; then
+    echo "Error: PR rev has changed to $(get_pr_rev)"
+    exit 1
+fi
+
+gh pr review $pr --approve --body "ACK $rev"
+notify-send --expire-time=0 "approved PR #$pr"

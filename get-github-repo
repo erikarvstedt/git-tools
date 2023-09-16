@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+# Sets variables
+# - remote
+# - repo (format `user/repo`)
+
+if git config --get remote.upstream.url >/dev/null; then
+    remote=upstream
+else
+    remote=origin
+fi
+remoteUrl=$(
+    if [[ $remote = upstream ]]; then
+        git config --get remote.upstream.url
+    else
+        git config --get remote.origin.url
+    fi | sed -E 's|:([^/])|/\1|; s|^ssh://|https://|; s|^.*@|https://|; s|\.git$||'
+)
+repo=${remoteUrl#*github.com/}
+repo=${repo%.git}
